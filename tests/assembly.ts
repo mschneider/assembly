@@ -10,10 +10,7 @@ import {
   getGrants,
   redeemGrant,
 } from "../lib";
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { sleep } from "../lib/sleep";
 
 async function createMint(provider, authority?, decimals = 6) {
   if (authority === undefined) {

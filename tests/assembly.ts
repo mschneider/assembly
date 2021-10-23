@@ -5,7 +5,6 @@ import {
   assignGrant,
   createDistributor,
   deriveDistributorAccounts,
-  deriveGrantAccount,
   getGrants,
   redeemGrant,
 } from "../lib";
@@ -210,7 +209,7 @@ describe("assembly", () => {
       redeemStartTs
     );
 
-    const { grantMint, rewardVault, bumps } = await deriveDistributorAccounts(
+    const { rewardVault } = await deriveDistributorAccounts(
       distMint.publicKey,
       rewardMint.publicKey
     );
@@ -223,11 +222,6 @@ describe("assembly", () => {
       totalRewardAmount
     );
     console.log("transferToken", tx1_);
-
-    const { grantAccount: grantA, grantBump: grantBumpA } =
-      await deriveGrantAccount(distributorAccount, userA.publicKey);
-    const { grantAccount: grantB, grantBump: grantBumpB } =
-      await deriveGrantAccount(distributorAccount, userB.publicKey);
 
     await assignGrant(
       provider,

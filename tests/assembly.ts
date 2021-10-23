@@ -101,8 +101,8 @@ describe("assembly", () => {
 
   const perUserDistAmount = 100;
   const totalRewardAmount = 100_000;
-  const userA = new anchor.web3.Account();
-  const userB = new anchor.web3.Account();
+  const userA = anchor.web3.Keypair.generate();
+  const userB = anchor.web3.Keypair.generate();
   let distMint, distTokenA, distTokenB;
   let rewardMint, rewardToken, rewardTokenA, rewardTokenB;
   let distEndTs, redeemStartTs;

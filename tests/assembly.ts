@@ -104,7 +104,7 @@ describe("assembly", () => {
   const userA = anchor.web3.Keypair.generate();
   const userB = anchor.web3.Keypair.generate();
   let distMint, distTokenA, distTokenB;
-  let rewardMint, rewardToken, rewardTokenA, rewardTokenB;
+  let rewardMint, rewardToken;
   let distEndTs, redeemStartTs;
 
   beforeEach(async () => {
@@ -138,16 +138,6 @@ describe("assembly", () => {
       provider,
       rewardMint.publicKey,
       provider.wallet.publicKey
-    );
-    rewardTokenA = await createTokenAccount(
-      provider,
-      rewardMint.publicKey,
-      userA.publicKey
-    );
-    rewardTokenB = await createTokenAccount(
-      provider,
-      rewardMint.publicKey,
-      userB.publicKey
     );
     await rewardMint.mintTo(
       rewardToken,

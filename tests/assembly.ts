@@ -1,19 +1,14 @@
 import * as anchor from "@project-serum/anchor";
 import * as spl from "@solana/spl-token";
-import { SYSVAR_CLOCK_PUBKEY } from "@solana/web3.js";
 import { expect } from "chai";
 import {
   assignGrant,
   createDistributor,
   deriveDistributorAccounts,
-  deriveGrantAccount,
   getGrants,
   redeemGrant,
 } from "../lib";
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { sleep } from "../lib/sleep";
 
 async function createMint(provider, authority?, decimals = 6) {
   if (authority === undefined) {
@@ -105,10 +100,10 @@ describe("assembly", () => {
 
   const perUserDistAmount = 100;
   const totalRewardAmount = 100_000;
-  const userA = new anchor.web3.Account();
-  const userB = new anchor.web3.Account();
+  const userA = anchor.web3.Keypair.generate();
+  const userB = anchor.web3.Keypair.generate();
   let distMint, distTokenA, distTokenB;
-  let rewardMint, rewardToken, rewardTokenA, rewardTokenB;
+  let rewardMint, rewardToken;
   let distEndTs, redeemStartTs;
 
   beforeEach(async () => {
@@ -142,16 +137,6 @@ describe("assembly", () => {
       provider,
       rewardMint.publicKey,
       provider.wallet.publicKey
-    );
-    rewardTokenA = await createTokenAccount(
-      provider,
-      rewardMint.publicKey,
-      userA.publicKey
-    );
-    rewardTokenB = await createTokenAccount(
-      provider,
-      rewardMint.publicKey,
-      userB.publicKey
     );
     await rewardMint.mintTo(
       rewardToken,
@@ -224,7 +209,7 @@ describe("assembly", () => {
       redeemStartTs
     );
 
-    const { grantMint, rewardVault, bumps } = await deriveDistributorAccounts(
+    const { rewardVault } = await deriveDistributorAccounts(
       distMint.publicKey,
       rewardMint.publicKey
     );
@@ -237,11 +222,6 @@ describe("assembly", () => {
       totalRewardAmount
     );
     console.log("transferToken", tx1_);
-
-    const { grantAccount: grantA, grantBump: grantBumpA } =
-      await deriveGrantAccount(distributorAccount, userA.publicKey);
-    const { grantAccount: grantB, grantBump: grantBumpB } =
-      await deriveGrantAccount(distributorAccount, userB.publicKey);
 
     await assignGrant(
       provider,

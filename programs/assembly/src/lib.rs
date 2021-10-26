@@ -122,7 +122,11 @@ pub struct InitializeDistributor<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    #[account(constraint = dist_mint.decimals == reward_mint.decimals)]
+    pub freeze_authority: Signer<'info>,
+
+    #[account(
+        constraint = dist_mint.decimals == reward_mint.decimals,
+        constraint = dist_mint.freeze_authority.unwrap()  == freeze_authority.key())]
     pub dist_mint: Box<Account<'info, Mint>>,
 
     pub reward_mint: Box<Account<'info, Mint>>,
@@ -133,10 +137,10 @@ pub struct InitializeDistributor<'info> {
         payer = payer)]
     pub distributor_account: Box<Account<'info, DistributorAccount>>,
 
-    // TODO set freeze authority
     #[account(init,
         mint::decimals = dist_mint.decimals,
         mint::authority = distributor_account,
+        mint::freeze_authority = freeze_authority,
         seeds = [distributor_account.key().as_ref(), b"grant_mint".as_ref()],
         bump = bumps.grant_bump,
         payer = payer)]

@@ -1,13 +1,20 @@
 import * as anchor from "@project-serum/anchor";
 import * as spl from "@solana/spl-token";
-import { expect } from "chai";
+
+import chai from "chai";
+import chaiAsPromised from "chai-as-promised";
+chai.use(chaiAsPromised);
+const expect = chai.expect;
+
 import {
   assignGrant,
   createDistributor,
   deriveDistributorAccounts,
+  deriveGrantAccount,
   getGrants,
   redeemGrant,
 } from "../lib";
+
 import { sleep } from "../lib/sleep";
 
 async function createMint(provider, authority?, decimals = 6) {
@@ -17,8 +24,8 @@ async function createMint(provider, authority?, decimals = 6) {
   const mint = await spl.Token.createMint(
     provider.connection,
     provider.wallet.payer,
-    authority,
-    null,
+    authority, // mint
+    authority, // freeze
     decimals,
     spl.TOKEN_PROGRAM_ID
   );
@@ -93,6 +100,17 @@ async function getAssociatedTokenAccount(provider, mint, owner) {
   return vault;
 }
 
+async function freezeTokenAccount(provider, mint, address) {
+  const token = new spl.Token(
+    provider.connection,
+    mint,
+    spl.TOKEN_PROGRAM_ID,
+    provider.wallet.payer
+  );
+
+  await token.freezeAccount(address, provider.wallet.payer, []);
+}
+
 describe("assembly", () => {
   const provider = anchor.Provider.env();
   anchor.setProvider(provider);
@@ -155,6 +173,7 @@ describe("assembly", () => {
       provider,
       distMint.publicKey,
       rewardMint.publicKey,
+      provider.wallet.publicKey,
       distEndTs,
       redeemStartTs
     );
@@ -198,6 +217,17 @@ describe("assembly", () => {
     expect(rewardVaultState.isInitialized).to.eql(true);
     expect(rewardVaultState.owner).to.eql(distributorAccount);
     expect(rewardVaultState.amount.toNumber()).to.eql(totalRewardAmount);
+
+    expect(
+      createDistributor(
+        provider,
+        distMint.publicKey,
+        rewardMint.publicKey,
+        provider.wallet.publicKey,
+        distEndTs,
+        distEndTs
+      )
+    ).to.be.rejected;
   });
 
   it("can grant distribute rewards to contributors", async () => {
@@ -205,6 +235,7 @@ describe("assembly", () => {
       provider,
       distMint.publicKey,
       rewardMint.publicKey,
+      provider.wallet.publicKey,
       distEndTs,
       redeemStartTs
     );
@@ -295,5 +326,68 @@ describe("assembly", () => {
     expect(userRewardB.amount.toString()).to.eq(
       (perUserDistAmount / 2).toString()
     );
+  });
+
+  it("can freeze grants", async () => {
+    const distributorAccount = await createDistributor(
+      provider,
+      distMint.publicKey,
+      rewardMint.publicKey,
+      provider.wallet.publicKey,
+      distEndTs,
+      redeemStartTs
+    );
+
+    const { grantMint, rewardVault, bumps } = await deriveDistributorAccounts(
+      distMint.publicKey,
+      rewardMint.publicKey
+    );
+
+    const tx1_ = await transferToken(
+      provider,
+      rewardMint.publicKey,
+      rewardToken,
+      rewardVault,
+      totalRewardAmount
+    );
+    console.log("transferToken", tx1_);
+
+    await assignGrant(
+      provider,
+      distMint.publicKey,
+      rewardMint.publicKey,
+      userA.publicKey,
+      perUserDistAmount,
+      "full grant to user a",
+      userB
+    );
+
+    await sleep(3000);
+
+    const grants = await getGrants(
+      provider,
+      distMint.publicKey,
+      rewardMint.publicKey
+    );
+
+    expect(grants[0]).to.deep.include({
+      transfer: {
+        from: userB.publicKey.toString(),
+        to: userA.publicKey.toString(),
+        amount: perUserDistAmount,
+      },
+      memo: "full grant to user a",
+    });
+
+    const { grantAccount } = await deriveGrantAccount(
+      distributorAccount,
+      userA.publicKey
+    );
+
+    await freezeTokenAccount(provider, grantMint, grantAccount);
+
+    expect(
+      redeemGrant(provider, distMint.publicKey, rewardMint.publicKey, userA)
+    ).to.be.rejected;
   });
 });

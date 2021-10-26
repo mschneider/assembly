@@ -17,6 +17,7 @@ export async function createDistributor(
   provider: anchor.Provider,
   distMint: PublicKey,
   rewardMint: PublicKey,
+  freezeAuthority: PublicKey,
   distEndTs: number,
   redeemStartTs: number
 ): Promise<PublicKey> {
@@ -30,6 +31,7 @@ export async function createDistributor(
     {
       accounts: {
         payer: provider.wallet.publicKey,
+        freezeAuthority,
         distMint,
         rewardMint,
         distributorAccount,

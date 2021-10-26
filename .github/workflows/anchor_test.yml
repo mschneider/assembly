@@ -65,6 +65,6 @@ jobs:
           solana --version
           solana-keygen new
       - run: yarn install
-      - name: Install Anchor CLI {{ env.anchor_version }}
-        run: yarn add -g @project-serum/anchor-cli@${{ env.anchor_version }}
+      - name: Install Anchor CLI
+        run: yarn global add @project-serum/anchor-cli@${{ env.anchor_version }}
       - run: anchor test

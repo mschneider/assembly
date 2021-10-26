@@ -33,8 +33,8 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: cargo-${{ runner.os }}-v0000-${{ hashFiles('**/Cargo.lock') }}
-      - name: Add Solana to PATH
-        run: echo "/home/runner/.local/share/solana/install/active_release/bin:$PATH" >> $GITHUB_PATH
+      - name: Add solana and yarn global to PATH
+        run: echo "$(yarn global bin):/home/runner/.local/share/solana/install/active_release/bin:$PATH" >> $GITHUB_PATH
       - uses: actions/cache@v2
         name: Cache Solana Tool Suite
         id: cache-solana

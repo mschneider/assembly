@@ -1,9 +1,9 @@
-import create, { State } from "zustand";
-import produce from "immer";
-import { Connection, PublicKey } from "@solana/web3.js";
 import { WalletAdapter } from "@solana/wallet-adapter-base";
+import { Connection } from "@solana/web3.js";
+import produce from "immer";
+import create, { State } from "zustand";
+import { ProgramAccount, TokenAccount } from "../../lib/tokens";
 import { WALLETS } from "../hooks/useWallet";
-import { ProgramAccount, TokenAccount } from "../tokens";
 
 interface WalletStore extends State {
   connected: boolean;

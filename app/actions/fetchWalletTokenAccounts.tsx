@@ -1,5 +1,5 @@
 import useWalletStore from "../stores/useWalletStore";
-import { getOwnedTokenAccounts } from "../tokens";
+import { getOwnedTokenAccounts } from "../../lib/tokens";
 
 export async function fetchWalletTokenAccounts() {
   const { connected, connection, wallet, set } = useWalletStore.getState();

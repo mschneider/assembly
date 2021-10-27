@@ -1,5 +1,5 @@
-// module.exports = {
-//   experimental: {
-//     externalDir: true,
-//   },
-// }
+module.exports = {
+  experimental: {
+    externalDir: true,
+  },
+}

@@ -9,6 +9,8 @@ export function notify(newNotification: {
   const { notifications, set: setNotificationStore } =
     useNotificationStore.getState();
 
+  console.info("notify", newNotification);
+
   setNotificationStore((state) => {
     state.notifications = [
       ...notifications,

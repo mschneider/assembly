@@ -1,4 +1,6 @@
 import 'tailwindcss/tailwind.css'
+import '../public/PSone.min.css'
+
 
 function MyApp({ Component, pageProps }) {
   return <Component {...pageProps} />

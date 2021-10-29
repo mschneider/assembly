@@ -1,9 +1,9 @@
-import { WalletAdapter } from "@solana/wallet-adapter-base";
-import { Connection } from "@solana/web3.js";
 import produce from "immer";
 import create, { State } from "zustand";
+import { Connection } from "@solana/web3.js";
+
 import { ProgramAccount, TokenAccount } from "../../lib/tokens";
-import { WALLETS } from "../hooks/useWallet";
+import { DEFAULT_PROVIDER, WalletAdapter } from "../wallet-adapters";
 
 interface WalletStore extends State {
   connected: boolean;
@@ -41,11 +41,11 @@ const initialConnectionState = {
   url: endpoint.url,
 };
 
-const wallet = WALLETS[0];
+const provider = DEFAULT_PROVIDER;
 const initialWalletState = {
-  current: wallet.adapter(undefined),
-  selected: wallet.name,
-  icon: wallet.icon,
+  current: new provider.adapter(),
+  selected: provider.name,
+  icon: provider.icon,
 };
 
 const useWalletStore = create<WalletStore>((set, _get) => ({

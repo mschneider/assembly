@@ -198,7 +198,7 @@ describe("assembly", () => {
     const grantMintState = await getMintAccount(provider, grantMint);
     expect(grantMintState.isInitialized).to.eql(true);
     expect(grantMintState.mintAuthority).to.eql(distributorAccount);
-    // expect(grantMintState.freezeAuthority).to.eql(new anchor.web3.PublicKey(''))
+    expect(grantMintState.freezeAuthority).to.eql(provider.wallet.publicKey);
 
     const tx2 = await transferToken(
       provider,

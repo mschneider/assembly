@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Burn, Mint, MintTo, TokenAccount, Transfer};
+use anchor_spl::token::{self, Burn, Mint, MintTo, Token, TokenAccount, Transfer};
 declare_id!("ZnnGciQUP9Qhhsqc7odCvUEXd6np2Cu87wrY6Va1u7p");
 
 #[program]
@@ -41,7 +41,7 @@ pub mod assembly {
             to: ctx.accounts.dist_token.to_account_info(),
             authority: ctx.accounts.donor_authority.to_account_info(),
         };
-        let cpi_program = ctx.accounts.token_program.clone();
+        let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
         token::burn(cpi_ctx, amount)?;
 
@@ -80,7 +80,7 @@ pub mod assembly {
             to: ctx.accounts.grant_account.to_account_info(),
             authority: ctx.accounts.distributor_account.to_account_info(),
         };
-        let cpi_program = ctx.accounts.token_program.clone();
+        let cpi_program = ctx.accounts.token_program.to_account_info();
         token::burn(
             CpiContext::new_with_signer(
                 cpi_program,
@@ -158,8 +158,7 @@ pub struct InitializeDistributor<'info> {
 
     pub system_program: Program<'info, System>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -197,8 +196,7 @@ pub struct InitializeGrant<'info> {
 
     pub system_program: Program<'info, System>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -238,8 +236,7 @@ pub struct TransferGrant<'info> {
 
     pub system_program: Program<'info, System>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -277,8 +274,7 @@ pub struct RedeemGrant<'info> {
 
     pub clock: Sysvar<'info, Clock>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[account]

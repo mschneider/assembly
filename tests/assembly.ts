@@ -1,5 +1,6 @@
 import * as anchor from "@project-serum/anchor";
 import * as spl from "@solana/spl-token";
+import { PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 
 import chai from "chai";
 import chaiAsPromised from "chai-as-promised";
@@ -111,6 +112,17 @@ async function freezeTokenAccount(provider, mint, address) {
   await token.freezeAccount(address, provider.wallet.payer, []);
 }
 
+async function generateTestUserAccount(provider, mint) {
+  const keypair = anchor.web3.Keypair.generate();
+  const associatedTokenAccount = await spl.Token.getAssociatedTokenAddress(
+    spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+    spl.TOKEN_PROGRAM_ID,
+    mint,
+    keypair.publicKey
+  );
+  return { keypair, associatedTokenAccount };
+}
+
 describe("assembly", () => {
   const provider = anchor.Provider.env();
   anchor.setProvider(provider);
@@ -168,6 +180,63 @@ describe("assembly", () => {
     redeemStartTs = new anchor.BN(Date.now() / 1000 + 3);
   });
 
+  it("can initialize a whole budget", async () => {
+    const program = anchor.workspace.Assembly;
+
+    const temporaryPdaSeed = anchor.web3.Keypair.generate().publicKey;
+    const [temporaryPda, temporaryPdaBump] = await PublicKey.findProgramAddress(
+      [temporaryPdaSeed.toBuffer()],
+      program.programId
+    );
+
+    const [distMintAccount, distMintBump] = await PublicKey.findProgramAddress(
+      [temporaryPda.toBuffer(), Buffer.from("dist_mint")],
+      program.programId
+    );
+
+    console.log("temporary_pda", temporaryPda.toString());
+    console.log("dist_mint", distMintAccount.toString());
+    console.log("reward_mint", rewardMint.publicKey.toString());
+
+    // attach all user accounts that should receive a budget
+    const users = await Promise.all(
+      [...Array(4)].map((_) =>
+        generateTestUserAccount(provider, distMintAccount)
+      )
+    );
+    const remainingAccounts = users.flatMap((u) => [
+      { pubkey: u.associatedTokenAccount, isWritable: true, isSigner: false },
+      { pubkey: u.keypair.publicKey, isWritable: false, isSigner: false },
+    ]);
+    console.log("remainingAccounts", remainingAccounts);
+
+    const tx = await program.rpc.initializeBudget(
+      {
+        temporaryPdaBump,
+        distMintBump,
+        allocations: users.map((_, i) => new anchor.BN(i * 1_000_000)),
+      },
+      {
+        accounts: {
+          payer: provider.wallet.publicKey,
+          freezeAuthority: provider.wallet.publicKey,
+          distMint: distMintAccount,
+          rewardMint: rewardMint.publicKey,
+          temporaryPda,
+          temporaryPdaSeed,
+          rent: SYSVAR_RENT_PUBKEY,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: spl.TOKEN_PROGRAM_ID,
+          associatedTokenProgram: spl.ASSOCIATED_TOKEN_PROGRAM_ID,
+        },
+        remainingAccounts,
+      }
+    );
+    console.debug("initializeBudget", temporaryPda.toString(), tx);
+  });
+
+  /*
+
   it("can initialize_distributor with an already distributed mint", async () => {
     const distributorAccount = await createDistributor(
       provider,
@@ -178,22 +247,22 @@ describe("assembly", () => {
       redeemStartTs
     );
 
-    const { grantMint, rewardVault, bumps } = await deriveDistributorAccounts(
-      distMint.publicKey,
-      rewardMint.publicKey
-    );
+    const { grantMint, rewardVault, distributorBump, grantBump, rewardBump } =
+      await deriveDistributorAccounts(distMint.publicKey, rewardMint.publicKey);
 
-    console.log("derive", grantMint.toString(), rewardVault.toString(), bumps);
+    console.log("derive", grantMint.toString(), rewardVault.toString());
 
     const distributor = await program.account.distributorAccount.fetch(
       distributorAccount
     );
     expect(distributor.distMint).to.eql(distMint.publicKey);
-    expect(distributor.distEndTs).to.eql(distEndTs);
-    expect(distributor.redeemStartTs).to.eql(redeemStartTs);
-    expect(distributor.bumps.distributorBump).to.eql(bumps.distributorBump);
-    expect(distributor.bumps.grantBump).to.eql(bumps.grantBump);
-    expect(distributor.bumps.rewardBump).to.eql(bumps.rewardBump);
+    expect(distributor.args).to.eql({
+      distEndTs,
+      redeemStartTs,
+      distributorBump,
+      grantBump,
+      rewardBump,
+    });
 
     const grantMintState = await getMintAccount(provider, grantMint);
     expect(grantMintState.isInitialized).to.eql(true);
@@ -390,4 +459,5 @@ describe("assembly", () => {
       redeemGrant(provider, distMint.publicKey, rewardMint.publicKey, userA)
     ).to.be.rejected;
   });
+  // */
 });

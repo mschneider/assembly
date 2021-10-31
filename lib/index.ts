@@ -22,12 +22,16 @@ export async function createDistributor(
   redeemStartTs: number
 ): Promise<PublicKey> {
   const program = anchor.workspace.Assembly;
-  const { distributorAccount, grantMint, rewardVault, bumps } =
-    await deriveDistributorAccounts(distMint, rewardMint);
+  const {
+    distributorAccount,
+    grantMint,
+    rewardVault,
+    distributorBump,
+    grantBump,
+    rewardBump,
+  } = await deriveDistributorAccounts(distMint, rewardMint);
   const tx = await program.rpc.initializeDistributor(
-    distEndTs,
-    redeemStartTs,
-    bumps,
+    { distEndTs, redeemStartTs, distributorBump, grantBump, rewardBump },
     {
       accounts: {
         payer: provider.wallet.publicKey,
@@ -314,15 +318,17 @@ export async function deriveDistributorAccounts(
     program.programId
   );
 
+  console.log("distributorAccount", distributorAccount.toString());
+  console.log("grantMint", grantMint.toString());
+  console.log("rewardVault", rewardVault.toString());
+
   return {
     distributorAccount,
     grantMint,
     rewardVault,
-    bumps: {
-      distributorBump,
-      grantBump,
-      rewardBump,
-    },
+    distributorBump,
+    grantBump,
+    rewardBump,
   };
 }
 

@@ -1,29 +1,76 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Burn, Mint, MintTo, TokenAccount, Transfer};
+use anchor_spl::{
+    associated_token::{self, AssociatedToken},
+    token::{self, Burn, Mint, MintTo, Token, TokenAccount, Transfer},
+};
 declare_id!("ZnnGciQUP9Qhhsqc7odCvUEXd6np2Cu87wrY6Va1u7p");
 
 #[program]
 pub mod assembly {
+    use anchor_lang::InstructionData;
+
     use super::*;
+
+    pub fn initialize_budget<'info>(
+        ctx: Context<'_, '_, '_, 'info, InitializeBudget<'info>>,
+        args: BudgetArgs,
+    ) -> ProgramResult {
+        if ctx.remaining_accounts.len() != args.allocations.len() * 2 {
+            return Err(ErrorCode::InvalidNumberOfAccounts.into());
+        }
+        for (pos, chunk) in ctx.remaining_accounts.chunks(2).enumerate() {
+            let associated_token = &chunk[0];
+            let authority = &chunk[1];
+
+            let cpi_accounts = anchor_spl::associated_token::Create {
+                payer: ctx.accounts.payer.to_account_info(),
+                associated_token: associated_token.clone(),
+                authority: authority.clone(),
+                mint: ctx.accounts.dist_mint.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+                token_program: ctx.accounts.token_program.to_account_info(),
+                rent: ctx.accounts.rent.to_account_info(),
+            };
+            let cpi_program = ctx.accounts.associated_token_program.to_account_info();
+            let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+            associated_token::create(cpi_ctx)?;
+
+            let cpi_accounts = MintTo {
+                mint: ctx.accounts.dist_mint.to_account_info(),
+                to: associated_token.clone(),
+                authority: ctx.accounts.temporary_pda.clone(),
+            };
+            let cpi_program = ctx.accounts.token_program.to_account_info();
+            token::mint_to(
+                CpiContext::new_with_signer(
+                    cpi_program,
+                    cpi_accounts,
+                    &[&[
+                        ctx.accounts.temporary_pda_seed.key().as_ref(),
+                        &[args.temporary_pda_bump],
+                    ]],
+                ),
+                args.allocations[pos],
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn initialize_distributor(
         ctx: Context<InitializeDistributor>,
-        dist_end_ts: i64,
-        redeem_start_ts: i64,
-        bumps: DerivedBumps,
+        args: DistributorArgs,
     ) -> ProgramResult {
         let distributor = &mut ctx.accounts.distributor_account;
 
         // save instruction params
         distributor.dist_mint = *ctx.accounts.dist_mint.to_account_info().key;
-        distributor.dist_end_ts = dist_end_ts;
-        distributor.redeem_start_ts = redeem_start_ts;
-        distributor.bumps = bumps;
+        distributor.args = args;
 
         Ok(())
     }
 
     pub fn initialize_grant(ctx: Context<InitializeGrant>, _bump: u8) -> ProgramResult {
-        if ctx.accounts.distributor_account.dist_end_ts < ctx.accounts.clock.unix_timestamp {
+        if ctx.accounts.distributor_account.args.dist_end_ts < ctx.accounts.clock.unix_timestamp {
             return Err(ErrorCode::DistributionPeriodEnded.into());
         }
 
@@ -31,7 +78,7 @@ pub mod assembly {
     }
 
     pub fn transfer_grant(ctx: Context<TransferGrant>, amount: u64, _bump: u8) -> ProgramResult {
-        if ctx.accounts.distributor_account.dist_end_ts < ctx.accounts.clock.unix_timestamp {
+        if ctx.accounts.distributor_account.args.dist_end_ts < ctx.accounts.clock.unix_timestamp {
             return Err(ErrorCode::DistributionPeriodEnded.into());
         }
 
@@ -41,7 +88,7 @@ pub mod assembly {
             to: ctx.accounts.dist_token.to_account_info(),
             authority: ctx.accounts.donor_authority.to_account_info(),
         };
-        let cpi_program = ctx.accounts.token_program.clone();
+        let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
         token::burn(cpi_ctx, amount)?;
 
@@ -58,7 +105,7 @@ pub mod assembly {
                 cpi_accounts,
                 &[&[
                     ctx.accounts.distributor_account.dist_mint.key().as_ref(),
-                    &[ctx.accounts.distributor_account.bumps.distributor_bump],
+                    &[ctx.accounts.distributor_account.args.distributor_bump],
                 ]],
             ),
             amount,
@@ -68,7 +115,8 @@ pub mod assembly {
     }
 
     pub fn redeem_grant(ctx: Context<RedeemGrant>, _bump: u8) -> ProgramResult {
-        if ctx.accounts.distributor_account.redeem_start_ts > ctx.accounts.clock.unix_timestamp {
+        if ctx.accounts.distributor_account.args.redeem_start_ts > ctx.accounts.clock.unix_timestamp
+        {
             return Err(ErrorCode::RedeemPeriodNotStarted.into());
         }
 
@@ -80,14 +128,14 @@ pub mod assembly {
             to: ctx.accounts.grant_account.to_account_info(),
             authority: ctx.accounts.distributor_account.to_account_info(),
         };
-        let cpi_program = ctx.accounts.token_program.clone();
+        let cpi_program = ctx.accounts.token_program.to_account_info();
         token::burn(
             CpiContext::new_with_signer(
                 cpi_program,
                 cpi_accounts,
                 &[&[
                     ctx.accounts.distributor_account.dist_mint.key().as_ref(),
-                    &[ctx.accounts.distributor_account.bumps.distributor_bump],
+                    &[ctx.accounts.distributor_account.args.distributor_bump],
                 ]],
             ),
             grant,
@@ -106,7 +154,7 @@ pub mod assembly {
                 cpi_accounts,
                 &[&[
                     ctx.accounts.distributor_account.dist_mint.key().as_ref(),
-                    &[ctx.accounts.distributor_account.bumps.distributor_bump],
+                    &[ctx.accounts.distributor_account.args.distributor_bump],
                 ]],
             ),
             grant,
@@ -117,7 +165,39 @@ pub mod assembly {
 }
 
 #[derive(Accounts)]
-#[instruction(dist_end_ts: i64, redeem_start_ts: i64, bumps: DerivedBumps)]
+#[instruction(args: BudgetArgs)]
+pub struct InitializeBudget<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    pub freeze_authority: Signer<'info>,
+
+    #[account(init,
+        mint::decimals = reward_mint.decimals,
+        mint::authority = temporary_pda,
+        mint::freeze_authority = freeze_authority,
+        seeds = [temporary_pda.key().as_ref(), b"dist_mint"],
+        bump = args.dist_mint_bump,
+        payer = payer)]
+    pub dist_mint: Box<Account<'info, Mint>>,
+
+    pub reward_mint: Box<Account<'info, Mint>>,
+
+    pub temporary_pda: AccountInfo<'info>,
+
+    pub temporary_pda_seed: AccountInfo<'info>,
+
+    pub rent: Sysvar<'info, Rent>,
+
+    pub system_program: Program<'info, System>,
+
+    pub token_program: Program<'info, Token>,
+
+    pub associated_token_program: Program<'info, AssociatedToken>,
+}
+
+#[derive(Accounts)]
+#[instruction(args: DistributorArgs)]
 pub struct InitializeDistributor<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -126,14 +206,14 @@ pub struct InitializeDistributor<'info> {
 
     #[account(
         constraint = dist_mint.decimals == reward_mint.decimals,
-        constraint = dist_mint.freeze_authority.unwrap()  == freeze_authority.key())]
+        constraint = dist_mint.freeze_authority.unwrap() == freeze_authority.key())]
     pub dist_mint: Box<Account<'info, Mint>>,
 
     pub reward_mint: Box<Account<'info, Mint>>,
 
     #[account(init,
         seeds = [dist_mint.key().as_ref()],
-        bump = bumps.distributor_bump,
+        bump = args.distributor_bump,
         payer = payer)]
     pub distributor_account: Box<Account<'info, DistributorAccount>>,
 
@@ -141,16 +221,16 @@ pub struct InitializeDistributor<'info> {
         mint::decimals = dist_mint.decimals,
         mint::authority = distributor_account,
         mint::freeze_authority = freeze_authority,
-        seeds = [distributor_account.key().as_ref(), b"grant_mint".as_ref()],
-        bump = bumps.grant_bump,
+        seeds = [distributor_account.key().as_ref(), b"grant_mint"],
+        bump = args.grant_bump,
         payer = payer)]
     pub grant_mint: Box<Account<'info, Mint>>,
 
     #[account(init,
         token::mint = reward_mint,
         token::authority = distributor_account,
-        seeds = [distributor_account.key().as_ref(), b"reward_vault".as_ref(), reward_mint.key().as_ref()],
-        bump = bumps.reward_bump,
+        seeds = [distributor_account.key().as_ref(), b"reward_vault", reward_mint.key().as_ref()],
+        bump = args.reward_bump,
         payer = payer)]
     pub reward_vault: Box<Account<'info, TokenAccount>>,
 
@@ -158,8 +238,7 @@ pub struct InitializeDistributor<'info> {
 
     pub system_program: Program<'info, System>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -174,19 +253,19 @@ pub struct InitializeGrant<'info> {
 
     #[account(
         seeds = [distributor_account.dist_mint.key().as_ref()],
-        bump = distributor_account.bumps.distributor_bump,
+        bump = distributor_account.args.distributor_bump,
     )]
     pub distributor_account: Box<Account<'info, DistributorAccount>>,
 
     #[account(
-        seeds = [distributor_account.key().as_ref(), b"grant_mint".as_ref()],
-        bump = distributor_account.bumps.grant_bump)]
+        seeds = [distributor_account.key().as_ref(), b"grant_mint"],
+        bump = distributor_account.args.grant_bump)]
     pub grant_mint: Box<Account<'info, Mint>>,
 
     #[account(init,
         token::mint = grant_mint,
         token::authority = distributor_account,
-        seeds = [distributor_account.key().as_ref(), b"grant".as_ref(), receiver_authority.key().as_ref()],
+        seeds = [distributor_account.key().as_ref(), b"grant", receiver_authority.key().as_ref()],
         bump = bump,
         payer = payer)]
     pub grant_account: Box<Account<'info, TokenAccount>>,
@@ -197,8 +276,7 @@ pub struct InitializeGrant<'info> {
 
     pub system_program: Program<'info, System>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -212,7 +290,7 @@ pub struct TransferGrant<'info> {
 
     #[account(
         seeds = [distributor_account.dist_mint.key().as_ref()],
-        bump = distributor_account.bumps.distributor_bump,
+        bump = distributor_account.args.distributor_bump,
     )]
     pub distributor_account: Box<Account<'info, DistributorAccount>>,
 
@@ -223,12 +301,12 @@ pub struct TransferGrant<'info> {
     pub dist_token: Box<Account<'info, TokenAccount>>,
 
     #[account(mut,
-        seeds = [distributor_account.key().as_ref(), b"grant_mint".as_ref()],
-        bump = distributor_account.bumps.grant_bump)]
+        seeds = [distributor_account.key().as_ref(), b"grant_mint"],
+        bump = distributor_account.args.grant_bump)]
     pub grant_mint: Box<Account<'info, Mint>>,
 
     #[account(mut,
-        seeds = [distributor_account.key().as_ref(), b"grant".as_ref(), receiver_authority.key().as_ref()],
+        seeds = [distributor_account.key().as_ref(), b"grant", receiver_authority.key().as_ref()],
         bump = bump)]
     pub grant_account: Box<Account<'info, TokenAccount>>,
 
@@ -238,8 +316,7 @@ pub struct TransferGrant<'info> {
 
     pub system_program: Program<'info, System>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -251,25 +328,25 @@ pub struct RedeemGrant<'info> {
 
     #[account(
         seeds = [distributor_account.dist_mint.key().as_ref()],
-        bump = distributor_account.bumps.distributor_bump,
+        bump = distributor_account.args.distributor_bump,
     )]
     pub distributor_account: Box<Account<'info, DistributorAccount>>,
 
     #[account(mut,
-        seeds = [distributor_account.key().as_ref(), b"grant_mint".as_ref()],
-        bump = distributor_account.bumps.grant_bump)]
+        seeds = [distributor_account.key().as_ref(), b"grant_mint"],
+        bump = distributor_account.args.grant_bump)]
     pub grant_mint: Box<Account<'info, Mint>>,
 
     #[account(mut,
-        seeds = [distributor_account.key().as_ref(), b"grant".as_ref(), receiver_authority.key().as_ref()],
+        seeds = [distributor_account.key().as_ref(), b"grant", receiver_authority.key().as_ref()],
         bump = bump)]
     pub grant_account: Box<Account<'info, TokenAccount>>,
 
     pub reward_mint: Box<Account<'info, Mint>>,
 
     #[account(mut,
-        seeds = [distributor_account.key().as_ref(), b"reward_vault".as_ref(), reward_mint.key().as_ref()],
-        bump = distributor_account.bumps.reward_bump)]
+        seeds = [distributor_account.key().as_ref(), b"reward_vault", reward_mint.key().as_ref()],
+        bump = distributor_account.args.reward_bump)]
     pub reward_vault: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, constraint = receiver_token_account.owner == receiver_authority.key())]
@@ -277,28 +354,36 @@ pub struct RedeemGrant<'info> {
 
     pub clock: Sysvar<'info, Clock>,
 
-    #[account(constraint = token_program.key == &token::ID)]
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Default, Clone)]
+pub struct BudgetArgs {
+    pub allocations: Vec<u64>,
+    pub dist_mint_bump: u8,
+    pub temporary_pda_bump: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Copy, Debug, Default, Clone)]
+pub struct DistributorArgs {
+    pub dist_end_ts: i64,
+    pub redeem_start_ts: i64,
+    pub distributor_bump: u8,
+    pub grant_bump: u8,
+    pub reward_bump: u8,
 }
 
 #[account]
 #[derive(Default)]
 pub struct DistributorAccount {
     pub dist_mint: Pubkey,
-    pub dist_end_ts: i64,
-    pub redeem_start_ts: i64,
-    pub bumps: DerivedBumps,
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Default, Clone)]
-pub struct DerivedBumps {
-    pub distributor_bump: u8,
-    pub grant_bump: u8,
-    pub reward_bump: u8,
+    pub args: DistributorArgs,
 }
 
 #[error]
 pub enum ErrorCode {
+    #[msg("Invalid number of accounts passed")]
+    InvalidNumberOfAccounts,
     #[msg("Distribution period ended")]
     DistributionPeriodEnded,
     #[msg("Redeem period has not started")]

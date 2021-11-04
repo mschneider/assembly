@@ -126,7 +126,7 @@ pub struct InitializeDistributor<'info> {
 
     #[account(
         constraint = dist_mint.decimals == reward_mint.decimals,
-        constraint = dist_mint.freeze_authority.unwrap()  == freeze_authority.key())]
+        constraint = dist_mint.freeze_authority.unwrap() == freeze_authority.key())]
     pub dist_mint: Box<Account<'info, Mint>>,
 
     pub reward_mint: Box<Account<'info, Mint>>,

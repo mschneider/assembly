@@ -1,16 +1,126 @@
 import * as anchor from "@project-serum/anchor";
 import {
+  Keypair,
   PublicKey,
   SystemProgram,
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_RENT_PUBKEY,
+  Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { associatedTokenAccount } from "easy-spl";
+import { associatedTokenAccount, mint } from "easy-spl";
 import * as bs58 from "bs58";
+import { chunk } from "./chunk";
+import { publicKey } from "@project-serum/anchor/dist/cjs/utils";
 
 const MEMO_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+
+export async function prepareDistMint(
+  provider: anchor.Provider,
+  rewardMint: PublicKey,
+  distributors: { authority: PublicKey }[],
+  governingAuthority?: PublicKey
+): Promise<PublicKey> {
+  if (!governingAuthority) {
+    governingAuthority = provider.wallet.publicKey;
+  }
+  const feePayer = provider.wallet.publicKey;
+  const recentBlockhash = (await provider.connection.getRecentBlockhash())
+    .blockhash;
+  const rewardMintInfo = await mint.get.info(provider.connection, rewardMint);
+
+  // create mint account
+  const distMint = Keypair.generate();
+
+  const mintTx = await mint.create.tx(
+    provider.connection,
+    rewardMintInfo.decimals,
+    distMint.publicKey,
+    governingAuthority,
+    provider.wallet.publicKey
+  );
+  mintTx.partialSign(distMint);
+
+  // create all associated token accounts for the distributors
+  const createTokenIxs = await Promise.all(
+    distributors.map(async (d) =>
+      associatedTokenAccount.create.maybeInstructions(
+        provider.connection,
+        distMint.publicKey,
+        d.authority,
+        provider.wallet.publicKey
+      )
+    )
+  );
+
+  // batch token accounts into multiple txs to not run into tx size limit
+  const createTokenIxsPerTx = chunk(
+    createTokenIxs.filter((ixs) => ixs.length > 0),
+    5
+  );
+  const createTokenTxs = createTokenIxsPerTx.map((ixsChunk) =>
+    new Transaction({ feePayer, recentBlockhash }).add(...ixsChunk.flat(1))
+  );
+
+  const txs = await provider.wallet.signAllTransactions(
+    [mintTx].concat(createTokenTxs)
+  );
+
+  const sigs = await provider.sendAll(txs.map((tx) => ({ tx, signers: [] })));
+
+  console.log("prepareDistMint", distMint.publicKey.toString(), ...sigs);
+
+  return distMint.publicKey;
+}
+
+export async function mintBudgetInstructions(
+  provider: anchor.Provider,
+  distMint: PublicKey,
+  rewardMint: PublicKey,
+  distributors: { authority: PublicKey; amount: number }[],
+  governingAuthority?: PublicKey
+): Promise<TransactionInstruction[]> {
+  if (!governingAuthority) {
+    governingAuthority = provider.wallet.publicKey;
+  }
+
+  const rewardMintInfo = await mint.get.info(provider.connection, rewardMint);
+
+  const ixs = await Promise.all(
+    distributors.map(async (d) => {
+      const tokenAccount =
+        await associatedTokenAccount.getAssociatedTokenAddress(
+          distMint,
+          d.authority
+        );
+      return mint.mintTo.rawInstructions(
+        distMint,
+        tokenAccount,
+        governingAuthority,
+        d.amount * Math.pow(10, rewardMintInfo.decimals)
+      );
+    })
+  );
+
+  return ixs.flat(1);
+}
+
+export async function mintBudget(
+  provider: anchor.Provider,
+  distMint: PublicKey,
+  rewardMint: PublicKey,
+  distributors: { authority: PublicKey; amount: number }[]
+) {
+  const ixs = await mintBudgetInstructions(
+    provider,
+    distMint,
+    rewardMint,
+    distributors
+  );
+
+  return await provider.send(new Transaction().add(...ixs));
+}
 
 // pass public keys and receive parsed account
 export async function createDistributor(
@@ -24,6 +134,16 @@ export async function createDistributor(
   const program = anchor.workspace.Assembly;
   const { distributorAccount, grantMint, rewardVault, bumps } =
     await deriveDistributorAccounts(distMint, rewardMint);
+
+  console.log(
+    "initializeDistributor",
+    freezeAuthority.toString(),
+    distMint.toString(),
+    rewardMint.toString(),
+    distributorAccount.toString(),
+    grantMint.toString(),
+    rewardVault.toString()
+  );
   const tx = await program.rpc.initializeDistributor(
     distEndTs,
     redeemStartTs,
@@ -59,7 +179,7 @@ export async function assignGrant(
   const donorAuthority = donor ? donor.publicKey : provider.wallet.publicKey;
 
   const program = anchor.workspace.Assembly;
-  const tx = new anchor.web3.Transaction();
+  const tx = new Transaction();
 
   const { distributorAccount, grantMint } = await deriveDistributorAccounts(
     distMint,
@@ -234,7 +354,7 @@ export async function redeemGrant(
   receiver?: anchor.web3.Signer
 ) {
   const program = anchor.workspace.Assembly;
-  let tx = new anchor.web3.Transaction();
+  let tx = new Transaction();
 
   const receiverAuthority = receiver
     ? receiver.publicKey
@@ -251,7 +371,6 @@ export async function redeemGrant(
     tx.add(
       ...(await associatedTokenAccount.createAssociatedTokenAccountInstructions(
         rewardMint,
-        receiverTokenAccount,
         receiverAuthority,
         provider.wallet.publicKey
       ))

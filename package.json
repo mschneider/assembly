@@ -1,7 +1,7 @@
 {
   "dependencies": {
-    "@project-serum/anchor": "^0.17.0",
-    "easy-spl": "^0.3.0"
+    "@project-serum/anchor": "^0.18.0",
+    "easy-spl": "git://github.com/mschneider/easy-spl.git#patch-2"
   },
   "devDependencies": {
     "@types/mocha": "^9.0.0",

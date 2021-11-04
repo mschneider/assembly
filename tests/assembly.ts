@@ -3,6 +3,7 @@ import * as spl from "@solana/spl-token";
 
 import chai from "chai";
 import chaiAsPromised from "chai-as-promised";
+import { tokenAccount } from "easy-spl";
 chai.use(chaiAsPromised);
 const expect = chai.expect;
 
@@ -12,6 +13,9 @@ import {
   deriveDistributorAccounts,
   deriveGrantAccount,
   getGrants,
+  mintBudget,
+  mintBudgetInstructions,
+  prepareDistMint,
   redeemGrant,
 } from "../lib";
 
@@ -125,43 +129,46 @@ describe("assembly", () => {
   let distEndTs, redeemStartTs;
 
   beforeEach(async () => {
-    distMint = await createMint(provider);
-    distTokenA = await createTokenAccount(
-      provider,
-      distMint.publicKey,
-      userA.publicKey
-    );
-    distTokenB = await createTokenAccount(
-      provider,
-      distMint.publicKey,
-      userB.publicKey
-    );
-    await distMint.mintTo(
-      distTokenA,
-      provider.wallet.publicKey,
-      [],
-      perUserDistAmount
-    );
-    await distMint.mintTo(
-      distTokenB,
-      provider.wallet.publicKey,
-      [],
-      perUserDistAmount
-    );
-
     // prepare reward tokens
-    rewardMint = await createMint(provider);
+    const rewardMintInfo = await createMint(provider);
+    rewardMint = rewardMintInfo.publicKey;
     rewardToken = await createTokenAccount(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       provider.wallet.publicKey
     );
-    await rewardMint.mintTo(
+    await rewardMintInfo.mintTo(
       rewardToken,
       provider.wallet.publicKey,
       [],
       totalRewardAmount
     );
+
+    // prepare distributor tokens
+    const distributors = [
+      {
+        authority: userA.publicKey,
+        amount: perUserDistAmount,
+      },
+      {
+        authority: userB.publicKey,
+        amount: perUserDistAmount,
+      },
+    ];
+
+    distMint = await prepareDistMint(provider, rewardMint, distributors);
+
+    const tx = await mintBudget(provider, distMint, rewardMint, distributors);
+
+    console.log("mintBudget", tx);
+
+    const tokenAccounts = await Promise.all(
+      distributors.map(async (d) =>
+        getAssociatedTokenAccount(provider, distMint, d.authority)
+      )
+    );
+    distTokenA = tokenAccounts[0];
+    distTokenB = tokenAccounts[1];
 
     // choose timestamps
     distEndTs = new anchor.BN(Date.now() / 1000 + 2);
@@ -171,16 +178,16 @@ describe("assembly", () => {
   it("can initialize_distributor with an already distributed mint", async () => {
     const distributorAccount = await createDistributor(
       provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
+      distMint,
+      rewardMint,
       provider.wallet.publicKey,
       distEndTs,
       redeemStartTs
     );
 
     const { grantMint, rewardVault, bumps } = await deriveDistributorAccounts(
-      distMint.publicKey,
-      rewardMint.publicKey
+      distMint,
+      rewardMint
     );
 
     console.log("derive", grantMint.toString(), rewardVault.toString(), bumps);
@@ -188,7 +195,7 @@ describe("assembly", () => {
     const distributor = await program.account.distributorAccount.fetch(
       distributorAccount
     );
-    expect(distributor.distMint).to.eql(distMint.publicKey);
+    expect(distributor.distMint).to.eql(distMint);
     expect(distributor.distEndTs).to.eql(distEndTs);
     expect(distributor.redeemStartTs).to.eql(redeemStartTs);
     expect(distributor.bumps.distributorBump).to.eql(bumps.distributorBump);
@@ -202,7 +209,7 @@ describe("assembly", () => {
 
     const tx2 = await transferToken(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       rewardToken,
       rewardVault,
       totalRewardAmount
@@ -211,7 +218,7 @@ describe("assembly", () => {
 
     const rewardVaultState = await getTokenAccount(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       rewardVault
     );
     expect(rewardVaultState.isInitialized).to.eql(true);
@@ -221,8 +228,8 @@ describe("assembly", () => {
     expect(
       createDistributor(
         provider,
-        distMint.publicKey,
-        rewardMint.publicKey,
+        distMint,
+        rewardMint,
         provider.wallet.publicKey,
         distEndTs,
         distEndTs
@@ -233,21 +240,21 @@ describe("assembly", () => {
   it("can grant distribute rewards to contributors", async () => {
     const distributorAccount = await createDistributor(
       provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
+      distMint,
+      rewardMint,
       provider.wallet.publicKey,
       distEndTs,
       redeemStartTs
     );
 
     const { rewardVault } = await deriveDistributorAccounts(
-      distMint.publicKey,
-      rewardMint.publicKey
+      distMint,
+      rewardMint
     );
 
     const tx1_ = await transferToken(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       rewardToken,
       rewardVault,
       totalRewardAmount
@@ -256,8 +263,8 @@ describe("assembly", () => {
 
     await assignGrant(
       provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
+      distMint,
+      rewardMint,
       userA.publicKey,
       perUserDistAmount,
       "full grant to user a",
@@ -265,8 +272,8 @@ describe("assembly", () => {
     );
     await assignGrant(
       provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
+      distMint,
+      rewardMint,
       userB.publicKey,
       perUserDistAmount / 2,
       "half grant to user b",
@@ -275,11 +282,7 @@ describe("assembly", () => {
 
     await sleep(3000);
 
-    const grants = await getGrants(
-      provider,
-      distMint.publicKey,
-      rewardMint.publicKey
-    );
+    const grants = await getGrants(provider, distMint, rewardMint);
 
     expect(grants[0]).to.deep.include({
       transfer: {
@@ -298,27 +301,17 @@ describe("assembly", () => {
       memo: "full grant to user a",
     });
 
-    await redeemGrant(
-      provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
-      userA
-    );
-    await redeemGrant(
-      provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
-      userB
-    );
+    await redeemGrant(provider, distMint, rewardMint, userA);
+    await redeemGrant(provider, distMint, rewardMint, userB);
 
     const userRewardA = await getAssociatedTokenAccount(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       userA.publicKey
     );
     const userRewardB = await getAssociatedTokenAccount(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       userB.publicKey
     );
 
@@ -331,21 +324,21 @@ describe("assembly", () => {
   it("can freeze grants", async () => {
     const distributorAccount = await createDistributor(
       provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
+      distMint,
+      rewardMint,
       provider.wallet.publicKey,
       distEndTs,
       redeemStartTs
     );
 
     const { grantMint, rewardVault, bumps } = await deriveDistributorAccounts(
-      distMint.publicKey,
-      rewardMint.publicKey
+      distMint,
+      rewardMint
     );
 
     const tx1_ = await transferToken(
       provider,
-      rewardMint.publicKey,
+      rewardMint,
       rewardToken,
       rewardVault,
       totalRewardAmount
@@ -354,8 +347,8 @@ describe("assembly", () => {
 
     await assignGrant(
       provider,
-      distMint.publicKey,
-      rewardMint.publicKey,
+      distMint,
+      rewardMint,
       userA.publicKey,
       perUserDistAmount,
       "full grant to user a",
@@ -364,11 +357,7 @@ describe("assembly", () => {
 
     await sleep(3000);
 
-    const grants = await getGrants(
-      provider,
-      distMint.publicKey,
-      rewardMint.publicKey
-    );
+    const grants = await getGrants(provider, distMint, rewardMint);
 
     expect(grants[0]).to.deep.include({
       transfer: {
@@ -386,8 +375,6 @@ describe("assembly", () => {
 
     await freezeTokenAccount(provider, grantMint, grantAccount);
 
-    expect(
-      redeemGrant(provider, distMint.publicKey, rewardMint.publicKey, userA)
-    ).to.be.rejected;
+    expect(redeemGrant(provider, distMint, rewardMint, userA)).to.be.rejected;
   });
 });
